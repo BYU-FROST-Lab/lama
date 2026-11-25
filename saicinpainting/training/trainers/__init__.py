@@ -1,3 +1,4 @@
+import inspect
 import logging
 import torch
 from saicinpainting.training.trainers.default import DefaultInpaintingTrainingModule
@@ -24,7 +25,13 @@ def make_training_model(config):
 
 def load_checkpoint(train_config, path, map_location='cuda', strict=True):
     model: torch.nn.Module = make_training_model(train_config)
-    state = torch.load(path, map_location=map_location)
+    # The checksummed, trusted legacy Lightning checkpoint includes non-tensor metadata.
+    # Torch 2.6 defaults weights_only=True, so opt out explicitly. Torch before 1.13 has no such
+    # argument (and passing it raises), so keep the legacy call there.
+    load_kwargs = {}
+    if 'weights_only' in inspect.signature(torch.load).parameters:
+        load_kwargs['weights_only'] = False
+    state = torch.load(path, map_location=map_location, **load_kwargs)
     model.load_state_dict(state['state_dict'], strict=strict)
     model.on_load_checkpoint(state)
     return model

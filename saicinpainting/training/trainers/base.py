@@ -2,20 +2,13 @@ import copy
 import logging
 from typing import Dict, Tuple
 
-import pandas as pd
 import pytorch_lightning as ptl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DistributedSampler
-import wandb
 
-from saicinpainting.evaluation import make_evaluator
-from saicinpainting.training.data.datasets import make_default_train_dataloader, make_default_val_dataloader
-from saicinpainting.training.losses.adversarial import make_discrim_loss
-from saicinpainting.training.losses.perceptual import PerceptualLoss, ResNetPL
-from saicinpainting.training.modules import make_generator, make_discriminator
-from saicinpainting.training.visualizers import make_visualizer
+from saicinpainting.training.modules import make_generator
 from saicinpainting.utils import add_prefix_to_keys, average_dicts, set_requires_grad, flatten_dict, \
     get_has_ddp_rank
 
@@ -72,6 +65,13 @@ class BaseInpaintingTrainingModule(ptl.LightningModule):
             LOGGER.info(f'Generator\n{self.generator}')
 
         if not predict_only:
+            # Keep training/evaluation dependencies outside direct checkpoint inference.
+            from saicinpainting.evaluation import make_evaluator
+            from saicinpainting.training.losses.adversarial import make_discrim_loss
+            from saicinpainting.training.losses.perceptual import PerceptualLoss, ResNetPL
+            from saicinpainting.training.modules import make_discriminator
+            from saicinpainting.training.visualizers import make_visualizer
+
             self.save_hyperparameters(self.config)
             self.discriminator = make_discriminator(**self.config.discriminator)
             self.adversarial_loss = make_discrim_loss(**self.config.losses.adversarial)
@@ -125,6 +125,8 @@ class BaseInpaintingTrainingModule(ptl.LightningModule):
         ]
 
     def train_dataloader(self):
+        from saicinpainting.training.data.datasets import make_default_train_dataloader
+
         kwargs = dict(self.config.data.train)
         if self.use_ddp:
             kwargs['ddp_kwargs'] = dict(num_replicas=self.trainer.num_nodes * self.trainer.num_processes,
@@ -134,6 +136,8 @@ class BaseInpaintingTrainingModule(ptl.LightningModule):
         return dataloader
 
     def val_dataloader(self):
+        from saicinpainting.training.data.datasets import make_default_val_dataloader
+
         res = [make_default_val_dataloader(**self.config.data.val)]
 
         if self.config.data.visual_test is not None:
@@ -181,6 +185,8 @@ class BaseInpaintingTrainingModule(ptl.LightningModule):
         return full_loss
 
     def validation_epoch_end(self, outputs):
+        import pandas as pd
+
         outputs = [step_out for out_group in outputs for step_out in out_group]
         averaged_logs = average_dicts(step_out['log_info'] for step_out in outputs)
         self.log_dict({k: v.mean() for k, v in averaged_logs.items()})
@@ -225,6 +231,8 @@ class BaseInpaintingTrainingModule(ptl.LightningModule):
                     self.log(f'extra_val_{cur_eval_title}_{k}', v)
 
     def _do_step(self, batch, batch_idx, mode='train', optimizer_idx=None, extra_val_key=None):
+        import wandb
+
         if optimizer_idx == 0:  # step for generator
             set_requires_grad(self.generator, True)
             set_requires_grad(self.discriminator, False)

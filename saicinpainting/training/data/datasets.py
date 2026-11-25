@@ -8,18 +8,13 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
-import webdataset
 from omegaconf import open_dict, OmegaConf
 from skimage.feature import canny
 from skimage.transform import rescale, resize
 from torch.utils.data import Dataset, IterableDataset, DataLoader, DistributedSampler, ConcatDataset
 import time
 
-from saicinpainting.evaluation.data import InpaintingDataset as InpaintingEvaluationDataset, \
-    OurInpaintingDataset as OurInpaintingEvaluationDataset, ceil_modulo, InpaintingEvalOnlineDataset, \
-    InpaintingActualMaskEvalDataset
 from saicinpainting.training.data.aug import IAAAffine2, IAAPerspective2
-from saicinpainting.training.data.masks import get_mask_generator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -93,6 +88,8 @@ class InpaintingTrainDataset(Dataset):
 
 class InpaintingTrainWebDataset(IterableDataset):
     def __init__(self, indir, mask_generator, transform, shuffle_buffer=200):
+        import webdataset
+
         self.impl = webdataset.Dataset(indir).shuffle(shuffle_buffer).decode('rgb').to_tuple('jpg')
         self.mask_generator = mask_generator
         self.transform = transform
@@ -278,6 +275,8 @@ def get_transforms(transform_variant, out_size=None):
 
 def make_default_train_dataloader(indir, kind='default', out_size=512, mask_gen_kwargs=None, transform_variant='default',
                                   mask_generator_kind="mixed", dataloader_kwargs=None, ddp_kwargs=None, **kwargs):
+    from saicinpainting.training.data.masks import get_mask_generator
+
     LOGGER.info(f'Make train dataloader {kind} from {indir}. Using mask generator={mask_generator_kind}')
 
     mask_generator = get_mask_generator(kind=mask_generator_kind, kwargs=mask_gen_kwargs)
@@ -324,6 +323,11 @@ def make_default_train_dataloader(indir, kind='default', out_size=512, mask_gen_
 
 
 def make_default_val_dataset(indir, kind='default', out_size=512, transform_variant='default', **kwargs):
+    from saicinpainting.evaluation.data import InpaintingDataset as InpaintingEvaluationDataset, \
+        OurInpaintingDataset as OurInpaintingEvaluationDataset, ceil_modulo, InpaintingEvalOnlineDataset, \
+        InpaintingActualMaskEvalDataset
+    from saicinpainting.training.data.masks import get_mask_generator
+
     if OmegaConf.is_list(indir) or isinstance(indir, (tuple, list)):
         return ConcatDataset([
             make_default_val_dataset(idir, kind=kind, out_size=out_size, transform_variant=transform_variant, **kwargs) for idir in indir 
@@ -377,6 +381,8 @@ def make_default_val_dataloader(*args, dataloader_kwargs=None, **kwargs):
 
 
 def make_constant_area_crop_params(img_height, img_width, min_size=128, max_size=512, area=256*256, round_to_mod=16):
+    from saicinpainting.evaluation.data import ceil_modulo
+
     min_size = min(img_height, img_width, min_size)
     max_size = min(img_height, img_width, max_size)
     if random.random() < 0.5:
